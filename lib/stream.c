@@ -32,6 +32,7 @@ struct uvc_stream
 	struct uvc_device *uvc;
 
 	struct events *events;
+	bool first_buffer;
 };
 
 /* ---------------------------------------------------------------------------
@@ -50,9 +51,8 @@ void uvc_stream_source_process(void *d, struct video_source *src,
 
     if (src->type == VIDEO_SOURCE_MMAP) {
         /* MMAPモードの場合、まず空のバッファをキューしてからデキューを試行 */
-        static bool first_buffer = true;
 
-        if (first_buffer) {
+		if (stream->first_buffer) {
             /* 初回のみ、すべてのバッファをキュー */
             unsigned int i;
             for (i = 0; i < sink->buffers.nbufs; ++i) {
@@ -70,7 +70,7 @@ void uvc_stream_source_process(void *d, struct video_source *src,
                     printf("DEBUG: Queued initial buffer %d\n", i);
                 }
             }
-            first_buffer = false;
+			stream->first_buffer = false;
         }
 
         /* デキューを試行 */
@@ -303,9 +303,9 @@ static int uvc_stream_start_mmap(struct uvc_stream *stream)
 {
     struct v4l2_device *sink = uvc_v4l2_device(stream->uvc);
     int ret;
-    // unsigned int i;
 
     printf("DEBUG: Starting MMAP stream\n");
+	stream->first_buffer = true;
 
     /* ソースでバッファを割り当て */
     ret = video_source_alloc_buffers(stream->src, 4);
