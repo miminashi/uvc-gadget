@@ -44,8 +44,8 @@ static void v4l2_source_video_process(void *d)
     struct video_buffer buf;
     int ret;
 
-    printf("DEBUG: v4l2_source_video_process called, use_mmap=%s\n",
-           src->use_mmap ? "true" : "false");
+    // printf("DEBUG: v4l2_source_video_process called, use_mmap=%s\n",
+    //        src->use_mmap ? "true" : "false");
 
     if (src->use_mmap) {
         /* MMAP用の処理 */
@@ -57,13 +57,14 @@ static void v4l2_source_video_process(void *d)
 
         ret = ioctl(src->vdev->fd, VIDIOC_DQBUF, &v4l2_buf);
         if (ret < 0) {
-            if (errno != EAGAIN)
+            if (errno != EAGAIN) {
                 perror("VIDIOC_DQBUF");
+            }
             return;
         }
 
-        printf("DEBUG: Dequeued buffer %d, bytesused=%u\n",
-               v4l2_buf.index, v4l2_buf.bytesused);
+        // printf("DEBUG: Dequeued buffer %d, bytesused=%u\n",
+        //        v4l2_buf.index, v4l2_buf.bytesused);
 
         /* video_bufferに変換 */
         buf.index = v4l2_buf.index;
@@ -72,21 +73,22 @@ static void v4l2_source_video_process(void *d)
         buf.dmabuf = -1;
         buf.mem = src->mmap_buffers[v4l2_buf.index].start;
 
-        printf("DEBUG: Calling handler with buffer size=%u\n", buf.size);
+        //printf("DEBUG: Calling handler with buffer size=%u\n", buf.size);
         src->src.handler(src->src.handler_data, &src->src, &buf);
 
         /* バッファをキューに戻す */
         ret = ioctl(src->vdev->fd, VIDIOC_QBUF, &v4l2_buf);
-        if (ret < 0)
+        if (ret < 0) {
             perror("VIDIOC_QBUF");
-        else
-            printf("DEBUG: Requeued buffer %d\n", v4l2_buf.index);
+        } else {
+            //printf("DEBUG: Requeued buffer %d\n", v4l2_buf.index);
+        }
     } else {
         /* 既存のDMABUF処理 */
         ret = v4l2_dequeue_buffer(src->vdev, &buf);
-        if (ret < 0)
+        if (ret < 0) {
             return;
-
+        }
         src->src.handler(src->src.handler_data, &src->src, &buf);
     }
 }

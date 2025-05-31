@@ -46,8 +46,8 @@ void uvc_stream_source_process(void *d, struct video_source *src,
     struct video_buffer uvc_buffer;
     int ret;
 
-    printf("DEBUG: uvc_stream_source_process called, src->type=%d, buffer->size=%u\n",
-           src->type, buffer->size);
+    // printf("DEBUG: uvc_stream_source_process called, src->type=%d, buffer->size=%u\n",
+    //        src->type, buffer->size);
 
     if (src->type == VIDEO_SOURCE_MMAP) {
         /* MMAPモードの場合、まず空のバッファをキューしてからデキューを試行 */
@@ -81,7 +81,7 @@ void uvc_stream_source_process(void *d, struct video_source *src,
             return;
         }
 
-        printf("DEBUG: Copying %u bytes from MMAP buffer to UVC buffer\n", buffer->size);
+        //printf("DEBUG: Copying %u bytes from MMAP buffer to UVC buffer\n", buffer->size);
 
         /* データをコピー */
         size_t copy_size = (buffer->size < uvc_buffer.size) ? buffer->size : uvc_buffer.size;
@@ -89,10 +89,12 @@ void uvc_stream_source_process(void *d, struct video_source *src,
         uvc_buffer.bytesused = buffer->size;
 
         ret = v4l2_queue_buffer(sink, &uvc_buffer);
-        if (ret < 0)
+        if (ret < 0) {
             printf("DEBUG: Error queuing buffer to UVC device: %d\n", ret);
-        else
-            printf("DEBUG: Successfully queued buffer to UVC device\n");
+		}
+        else {
+            //printf("DEBUG: Successfully queued buffer to UVC device\n");
+		}
     } else {
         printf("DEBUG: Using DMABUF mode\n");
         /* 既存のDMABUF処理 */
@@ -105,8 +107,9 @@ void uvc_stream_source_process(void *d, struct video_source *src,
         uvc_buffer.bytesused = buffer->size;
 
         ret = v4l2_queue_buffer(sink, &uvc_buffer);
-        if (ret < 0)
+        if (ret < 0) {
             printf("Error queuing buffer to UVC device\n");
+		}
     }
 
     video_source_queue_buffer(src, buffer);
@@ -120,8 +123,9 @@ static void uvc_stream_uvc_process(void *d)
 	int ret;
 
 	ret = v4l2_dequeue_buffer(sink, &buf);
-	if (ret < 0)
+	if (ret < 0) {
 		return;
+	}
 
 	video_source_queue_buffer(stream->src, &buf);
 }
@@ -134,8 +138,9 @@ static void uvc_stream_uvc_process_no_buf(void *d)
 	int ret;
 
 	ret = v4l2_dequeue_buffer(sink, &buf);
-	if (ret < 0)
+	if (ret < 0) {
 		return;
+	}
 
 	video_source_fill_buffer(stream->src, &buf);
 
@@ -192,8 +197,9 @@ error_free_sink:
 	v4l2_free_buffers(sink);
 error_free_source:
 	video_source_free_buffers(stream->src);
-	if (buffers)
+	if (buffers) {
 		video_buffer_set_delete(buffers);
+	}
 	return ret;
 }
 
@@ -229,15 +235,17 @@ static int uvc_stream_start_no_alloc(struct uvc_stream *stream)
 
 		video_source_fill_buffer(stream->src, &buf);
 		ret = v4l2_queue_buffer(sink, &buf);
-		if (ret < 0)
+		if (ret < 0) {
 			return ret;
+		}
 	}
 
 	/* Start the source and sink. */
 	video_source_stream_on(stream->src);
 	ret = v4l2_stream_on(sink);
-	if (ret < 0)
+	if (ret < 0) {
 		return ret;
+	}
 
 	events_watch_fd(stream->events, sink->fd, EVENT_WRITE,
 			uvc_stream_uvc_process_no_buf, stream);
@@ -408,10 +416,11 @@ static int uvc_stream_stop(struct uvc_stream *stream)
 
 void uvc_stream_enable(struct uvc_stream *stream, int enable)
 {
-	if (enable)
+	if (enable) {
 		uvc_stream_start(stream);
-	else
+	} else {
 		uvc_stream_stop(stream);
+	}
 }
 
 int uvc_stream_set_format(struct uvc_stream *stream,
@@ -424,8 +433,9 @@ int uvc_stream_set_format(struct uvc_stream *stream,
 		format->pixelformat, format->width, format->height);
 
 	ret = uvc_set_format(stream->uvc, &fmt);
-	if (ret < 0)
+	if (ret < 0) {
 		return ret;
+	}
 
 	return video_source_set_format(stream->src, &fmt);
 }
@@ -445,14 +455,16 @@ struct uvc_stream *uvc_stream_new(const char *uvc_device)
 	struct uvc_stream *stream;
 
 	stream = malloc(sizeof(*stream));
-	if (stream == NULL)
+	if (stream == NULL) {
 		return NULL;
+	}
 
 	memset(stream, 0, sizeof(*stream));
 
 	stream->uvc = uvc_open(uvc_device, stream);
-	if (stream->uvc == NULL)
+	if (stream->uvc == NULL) {
 		goto error;
+	}
 
 	return stream;
 
@@ -463,8 +475,9 @@ error:
 
 void uvc_stream_delete(struct uvc_stream *stream)
 {
-	if (stream == NULL)
+	if (stream == NULL) {
 		return;
+	}
 
 	uvc_close(stream->uvc);
 
