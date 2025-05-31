@@ -854,3 +854,37 @@ int v4l2_stream_off(struct v4l2_device *dev)
 
 	return 0;
 }
+
+int v4l2_check_dmabuf_support(struct v4l2_device *dev)
+{
+    struct v4l2_requestbuffers req;
+    int ret;
+
+    memset(&req, 0, sizeof(req));
+    req.count = 1;
+    req.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+    req.memory = V4L2_MEMORY_MMAP;
+
+    ret = ioctl(dev->fd, VIDIOC_REQBUFS, &req);
+    if (ret < 0)
+        return 0;
+
+    /* DMABUFエクスポートの試行 */
+    struct v4l2_exportbuffer expbuf;
+    memset(&expbuf, 0, sizeof(expbuf));
+    expbuf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+    expbuf.index = 0;
+
+    ret = ioctl(dev->fd, VIDIOC_EXPBUF, &expbuf);
+
+    /* バッファを解放 */
+    req.count = 0;
+    ioctl(dev->fd, VIDIOC_REQBUFS, &req);
+
+    if (ret < 0) {
+        return 0; /* DMABUFサポートなし */
+    } else {
+        close(expbuf.fd);
+        return 1; /* DMABUFサポートあり */
+    }
+}

@@ -350,4 +350,6 @@ int v4l2_get_controls(struct v4l2_device *dev, unsigned int count,
 int v4l2_set_controls(struct v4l2_device *dev, unsigned int count,
 		      struct v4l2_ext_control *ctrls);
 
+int v4l2_check_dmabuf_support(struct v4l2_device *dev);
+
 #endif

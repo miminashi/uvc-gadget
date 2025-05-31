@@ -43,6 +43,7 @@ typedef void(*video_source_buffer_handler_t)(void *, struct video_source *,
  */
 enum video_source_type {
 	VIDEO_SOURCE_DMABUF,
+	VIDEO_SOURCE_MMAP,
 	VIDEO_SOURCE_STATIC,
 	VIDEO_SOURCE_ENCODED,
 };

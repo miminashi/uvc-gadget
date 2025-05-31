@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/param.h>
 
 #include "events.h"
 #include "stream.h"
@@ -36,15 +37,79 @@ struct uvc_stream
 /* ---------------------------------------------------------------------------
  * Video streaming
  */
-
-static void uvc_stream_source_process(void *d,
-				      struct video_source *src __attribute__((unused)),
-				      struct video_buffer *buffer)
+void uvc_stream_source_process(void *d, struct video_source *src,
+                  struct video_buffer *buffer)
 {
-	struct uvc_stream *stream = d;
-	struct v4l2_device *sink = uvc_v4l2_device(stream->uvc);
+    struct uvc_stream *stream = d;
+    struct v4l2_device *sink = uvc_v4l2_device(stream->uvc);
+    struct video_buffer uvc_buffer;
+    int ret;
 
-	v4l2_queue_buffer(sink, buffer);
+    printf("DEBUG: uvc_stream_source_process called, src->type=%d, buffer->size=%u\n",
+           src->type, buffer->size);
+
+    if (src->type == VIDEO_SOURCE_MMAP) {
+        /* MMAPモードの場合、まず空のバッファをキューしてからデキューを試行 */
+        static bool first_buffer = true;
+
+        if (first_buffer) {
+            /* 初回のみ、すべてのバッファをキュー */
+            unsigned int i;
+            for (i = 0; i < sink->buffers.nbufs; ++i) {
+                struct video_buffer buf = {
+                    .index = i,
+                    .size = sink->buffers.buffers[i].size,
+                    .mem = sink->buffers.buffers[i].mem,
+                    .bytesused = 0,
+                };
+
+                ret = v4l2_queue_buffer(sink, &buf);
+                if (ret < 0) {
+                    printf("DEBUG: Failed to queue initial buffer %d: %d\n", i, ret);
+                } else {
+                    printf("DEBUG: Queued initial buffer %d\n", i);
+                }
+            }
+            first_buffer = false;
+        }
+
+        /* デキューを試行 */
+        ret = v4l2_dequeue_buffer(sink, &uvc_buffer);
+        if (ret < 0) {
+            printf("DEBUG: v4l2_dequeue_buffer failed: %d\n", ret);
+            video_source_queue_buffer(src, buffer);
+            return;
+        }
+
+        printf("DEBUG: Copying %u bytes from MMAP buffer to UVC buffer\n", buffer->size);
+
+        /* データをコピー */
+        size_t copy_size = (buffer->size < uvc_buffer.size) ? buffer->size : uvc_buffer.size;
+        memcpy(uvc_buffer.mem, buffer->mem, copy_size);
+        uvc_buffer.bytesused = buffer->size;
+
+        ret = v4l2_queue_buffer(sink, &uvc_buffer);
+        if (ret < 0)
+            printf("DEBUG: Error queuing buffer to UVC device: %d\n", ret);
+        else
+            printf("DEBUG: Successfully queued buffer to UVC device\n");
+    } else {
+        printf("DEBUG: Using DMABUF mode\n");
+        /* 既存のDMABUF処理 */
+        ret = v4l2_dequeue_buffer(sink, &uvc_buffer);
+        if (ret < 0) {
+            video_source_queue_buffer(src, buffer);
+            return;
+        }
+
+        uvc_buffer.bytesused = buffer->size;
+
+        ret = v4l2_queue_buffer(sink, &uvc_buffer);
+        if (ret < 0)
+            printf("Error queuing buffer to UVC device\n");
+    }
+
+    video_source_queue_buffer(src, buffer);
 }
 
 static void uvc_stream_uvc_process(void *d)
@@ -234,27 +299,94 @@ error_free_source:
 	return ret;
 }
 
+static int uvc_stream_start_mmap(struct uvc_stream *stream)
+{
+    struct v4l2_device *sink = uvc_v4l2_device(stream->uvc);
+    int ret;
+    // unsigned int i;
+
+    printf("DEBUG: Starting MMAP stream\n");
+
+    /* ソースでバッファを割り当て */
+    ret = video_source_alloc_buffers(stream->src, 4);
+    if (ret < 0) {
+        printf("Failed to allocate source buffers: %s (%d)\n",
+               strerror(-ret), -ret);
+        return ret;
+    }
+
+    /* MMAPモード用：UVCデバイスでMMAP用バッファを割り当て */
+    ret = v4l2_alloc_buffers(sink, V4L2_MEMORY_MMAP, 4);
+    if (ret < 0) {
+        printf("Failed to allocate sink buffers: %s (%d)\n",
+               strerror(-ret), -ret);
+        goto error_free_source;
+    }
+
+    /* UVCデバイスのバッファをmmap */
+    ret = v4l2_mmap_buffers(sink);
+    if (ret < 0) {
+        printf("Failed to mmap sink buffers: %s (%d)\n",
+               strerror(-ret), -ret);
+        goto error_free_sink;
+    }
+
+    /* ストリーミング開始（バッファキューイングはストリーミング開始後） */
+    ret = video_source_stream_on(stream->src);
+    if (ret < 0) {
+        printf("Failed to start source stream: %s (%d)\n",
+               strerror(-ret), -ret);
+        goto error_free_sink;
+    }
+
+    ret = v4l2_stream_on(sink);
+    if (ret < 0) {
+        printf("Failed to start sink stream: %s (%d)\n",
+               strerror(-ret), -ret);
+        goto error_stream_off_source;
+    }
+
+    printf("DEBUG: MMAP stream started successfully\n");
+    return 0;
+
+error_stream_off_source:
+    video_source_stream_off(stream->src);
+error_free_sink:
+    v4l2_free_buffers(sink);
+error_free_source:
+    video_source_free_buffers(stream->src);
+
+    return ret;
+}
+
 static int uvc_stream_start(struct uvc_stream *stream)
 {
-	printf("Starting video stream.\n");
+    printf("Starting video stream.\n");
+    printf("DEBUG: Source type = %d\n", stream->src->type);
 
-	switch (stream->src->type) {
-	case VIDEO_SOURCE_DMABUF:
-		video_source_set_buffer_handler(stream->src, uvc_stream_source_process,
-						stream);
-		return uvc_stream_start_alloc(stream);
-	case VIDEO_SOURCE_STATIC:
-		return uvc_stream_start_no_alloc(stream);
-	case VIDEO_SOURCE_ENCODED:
-		video_source_set_buffer_handler(stream->src, uvc_stream_source_process,
-						stream);
-		return uvc_stream_start_encoded(stream);
-	default:
-		fprintf(stderr, "invalid video source type\n");
-		break;
-	}
+    switch (stream->src->type) {
+    case VIDEO_SOURCE_DMABUF:
+        printf("DEBUG: Using DMABUF path\n");
+        video_source_set_buffer_handler(stream->src, uvc_stream_source_process,
+                        stream);
+        return uvc_stream_start_alloc(stream);
+    case VIDEO_SOURCE_MMAP:  /* MMAPケース用の専用処理 */
+        printf("DEBUG: Using MMAP path\n");
+        video_source_set_buffer_handler(stream->src, uvc_stream_source_process,
+                        stream);
+        return uvc_stream_start_mmap(stream);
+    case VIDEO_SOURCE_STATIC:
+        return uvc_stream_start_no_alloc(stream);
+    case VIDEO_SOURCE_ENCODED:
+        video_source_set_buffer_handler(stream->src, uvc_stream_source_process,
+                        stream);
+        return uvc_stream_start_encoded(stream);
+    default:
+        fprintf(stderr, "invalid video source type: %d\n", stream->src->type);
+        break;
+    }
 
-	return -EINVAL;
+    return -EINVAL;
 }
 
 static int uvc_stream_stop(struct uvc_stream *stream)
